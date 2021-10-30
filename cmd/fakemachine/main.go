@@ -67,6 +67,13 @@ func SetupImages(m *fakemachine.Machine, options Options) {
 				break
 			}
 			l, err = m.CreateImage(parts[0], size)
+		case 3:
+			var size int64
+			size, err = units.FromHumanSize(parts[1])
+			if err != nil {
+				break
+			}
+			l, err = m.CreateImageWithFormat(parts[0], size, parts[2])
 		default:
 			fmt.Fprintf(os.Stderr, "Failed to parse image: %s\n", i)
 			os.Exit(1)
