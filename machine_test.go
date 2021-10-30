@@ -40,6 +40,17 @@ func TestImage(t *testing.T) {
 	}
 }
 
+func TestImageQcow2(t *testing.T) {
+	m := NewMachine()
+
+	m.CreateImageWithFormat("test.qcow2", 1024*1024, "qcow2")
+	exitcode, _ := m.Run("test -b /dev/vda")
+
+	if exitcode != 0 {
+		t.Fatalf("Test for the virtual image device failed with %d", exitcode)
+	}
+}
+
 func AssertMount(t *testing.T, mountpoint, fstype string) {
 	m, err := os.Open("/proc/self/mounts")
 	assert.Nil(t, err)
