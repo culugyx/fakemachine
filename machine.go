@@ -216,6 +216,7 @@ func Supported() bool {
 }
 
 const initScript = `#!/bin/busybox sh
+set -e
 
 busybox mount -t proc proc /proc
 busybox mount -t sysfs none /sys
@@ -229,6 +230,8 @@ busybox modprobe {{ $m }}
 {{ range $point := StaticVolumes .Machine }}
 {{ MountVolume $.Backend $point }}
 {{ end }}
+
+{{ AttachQcow2Image .Machine .Backend }}
 
 exec /lib/systemd/systemd
 `
@@ -255,6 +258,8 @@ if [ $? != 0 ]; then
   exit
 fi
 
+%[3]s
+
 echo Running '%[2]s' using '%[1]s' backend
 %[2]s
 echo $? > /run/fakemachine/result
@@ -277,6 +282,7 @@ Environment=HOME=/root IN_FAKE_MACHINE=yes %[2]s
 WorkingDirectory=-/scratch
 ExecStart=/wrapper
 ExecStopPost=/bin/sync
+ExecStopPost=/detach
 ExecStopPost=/bin/systemctl poweroff -ff
 Type=idle
 TTYPath=%[1]s
@@ -315,10 +321,67 @@ func tmplStaticVolumes(m Machine) []mountPoint {
 	return mounts
 }
 
+// TODO
+func tmplAttachQcow2Image(m Machine, b backend) string {
+	if b.Name() != "uml" {
+		return ""
+	}
+	nbdLoaded := false
+	attachCommand := []string{}
+	for i, img := range m.images {
+		if img.format != "qcow2" {
+			continue
+		}
+		if !nbdLoaded {
+			attachCommand = append(attachCommand, "busybox modprobe nbd")
+			nbdLoaded = true
+			attachCommand = append(attachCommand, "busybox mkdir /image")
+		}
+		imgDir := path.Dir(img.path)
+		imgDirInMachine := "/image/dir" + strconv.Itoa(i)
+		imgBase := path.Base(img.path)
+
+		attachCommand = append(attachCommand, "busybox mkdir " + imgDirInMachine)
+
+		attachCommand = append(attachCommand, "busybox mount -v -t hostfs -o \"" + imgDir + "\" " + imgBase + " " + imgDirInMachine)
+		// failed to daemonize
+		//attachCommand = append(attachCommand, "qemu-nbd -c /dev/nbd" + strconv.Itoa(i) + " -f qcow2 " + path.Join(imgDirInMachine, imgBase))
+	}
+	return strings.Join(attachCommand, "\n")
+}
+
+func tmplAttachQcow2ImageWrapper(m *Machine, b backend) string {
+	if b.Name() != "uml" {
+		return ""
+	}
+	attachCommand := []string{}
+	for i, img := range m.images {
+		imgDirInMachine := "/image/dir" + strconv.Itoa(i)
+		imgBase := path.Base(img.path)
+		attachCommand = append(attachCommand, "qemu-nbd -c /dev/nbd" + strconv.Itoa(i) + " -f qcow2 " + path.Join(imgDirInMachine, imgBase))
+	}
+	return strings.Join(attachCommand, "\n")
+}
+
+func tmplDetachQcow2Image(m Machine, b backend) string {
+	if b.Name() != "uml" {
+		return ""
+	}
+	detachCommand := []string{}
+	for i, img := range m.images {
+		if img.format != "qcow2" {
+			continue
+		}
+		detachCommand = append(detachCommand, "qemu-nbd -d /dev/nbd" + strconv.Itoa(i))
+	}
+	return strings.Join(detachCommand, "\n")
+}
+
 func executeInitScriptTemplate(m *Machine, b backend) []byte {
 	helperFuncs := template.FuncMap{
 		"MountVolume": tmplMountVolume,
 		"StaticVolumes": tmplStaticVolumes,
+		"AttachQcow2Image": tmplAttachQcow2Image,
 	}
 
 	type templateVars struct {
@@ -328,6 +391,25 @@ func executeInitScriptTemplate(m *Machine, b backend) []byte {
 	tmplVariables := templateVars{m, b}
 
 	tmpl := template.Must(template.New("init").Funcs(helperFuncs).Parse(initScript))
+	out := &bytes.Buffer{}
+	if err := tmpl.Execute(out, tmplVariables); err != nil {
+		panic(err)
+	}
+	return out.Bytes()
+}
+
+func executeDetachScriptTemplate(m *Machine, b backend) []byte {
+	helperFuncs := template.FuncMap{
+		"DetachQcow2Image": tmplDetachQcow2Image,
+	}
+
+	type templateVars struct {
+		Machine *Machine
+		Backend backend
+	}
+	tmplVariables := templateVars{m, b}
+
+	tmpl := template.Must(template.New("detach").Funcs(helperFuncs).Parse("#!/bin/sh\n{{ DetachQcow2Image .Machine .Backend }}\n"))
 	out := &bytes.Buffer{}
 	if err := tmpl.Execute(out, tmplVariables); err != nil {
 		panic(err)
@@ -675,9 +757,11 @@ func (m *Machine) startup(command string, extracontent [][2]string) (int, error)
 		0755)
 
 	w.WriteFile("/wrapper",
-		fmt.Sprintf(commandWrapper, backend.Name(), command), 0755)
+		fmt.Sprintf(commandWrapper, backend.Name(), command, tmplAttachQcow2ImageWrapper(m, backend)), 0755)
 
 	w.WriteFileRaw("/init", executeInitScriptTemplate(m, backend), 0755)
+
+	w.WriteFileRaw("/detach", executeDetachScriptTemplate(m, backend), 0755)
 
 	m.generateFstab(w, backend)
 

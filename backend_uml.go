@@ -233,11 +233,14 @@ func (b umlBackend) Start() (bool, error) {
 	}
 
 	for i, img := range m.images {
-		if img.format != "raw" {
-			return false, fmt.Errorf("uml backend doesn't support non-raw image format (%s)", img.format)
+		if img.format == "raw" {
+			umlargs = append(umlargs,
+				fmt.Sprintf("ubd%d=%s", i, img.path))
+		} else if img.format == "qcow2" {
+			// TODO
+		} else {
+			return false, fmt.Errorf("uml backend doesn't support image format other than raw and qcow2 (%s)", img.format)
 		}
-		umlargs = append(umlargs,
-			fmt.Sprintf("ubd%d=%s", i, img.path))
 	}
 
 	p, err := os.StartProcess(kernelPath, umlargs, umlAttr)
