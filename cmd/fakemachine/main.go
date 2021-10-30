@@ -68,6 +68,10 @@ func SetupImages(m *fakemachine.Machine, options Options) {
 			}
 			l, err = m.CreateImage(parts[0], size)
 		case 3:
+			if parts[1] == "-1" {
+				l, err = m.CreateImageWithFormat(parts[0], -1, parts[2])
+				break
+			}
 			var size int64
 			size, err = units.FromHumanSize(parts[1])
 			if err != nil {
