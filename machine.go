@@ -130,6 +130,7 @@ type mountPoint struct {
 type image struct {
 	path  string
 	label string
+	format string
 }
 
 type Machine struct {
@@ -358,15 +359,8 @@ func (m *Machine) AddVolume(directory string) {
 	m.AddVolumeAt(directory, directory)
 }
 
-// CreateImageWithLabel creates an image file at path a given size and exposes
-// it in the fake machine using the given label as the serial id. If size is -1
-// then the image should already exist and the size isn't modified.
-//
-// label needs to be less then 20 characters due to limitations from qemu
-//
-// The returned string is the device path of the new image as seen inside
-// fakemachine.
-func (m *Machine) CreateImageWithLabel(path string, size int64, label string) (string,
+// TODO
+func (m *Machine) CreateImageWithLabelFormat(path string, size int64, label string, format string) (string,
 	error) {
 	if size < 0 {
 		_, err := os.Stat(path)
@@ -385,30 +379,65 @@ func (m *Machine) CreateImageWithLabel(path string, size int64, label string) (s
 		}
 	}
 
-	i, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0666)
-	if err != nil {
-		return "", err
-	}
-
-	if size >= 0 {
-		err = i.Truncate(size)
+	if format == "raw" {
+		i, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0666)
 		if err != nil {
 			return "", err
 		}
-	}
 
-	i.Close()
-	m.images = append(m.images, image{path, label})
+		if size >= 0 {
+			err = i.Truncate(size)
+			if err != nil {
+				return "", err
+			}
+		}
+
+		i.Close()
+	} else if format == "qcow2" {
+		if size >= 0 {
+			err := exec.Command("qemu-img", "create", "-f", format, path, strconv.FormatInt(size, 10)).Run()
+			if err != nil {
+				return "", err
+			}
+		} else {
+			// Check existence with "qemu-img info".
+			err := exec.Command("qemu-img", "info", "-f", format, path).Run()
+			if err != nil {
+				return "", err
+			}
+		}
+	} else {
+		return "", fmt.Errorf("Unsupported image format '%s'", format)
+	}
+	m.images = append(m.images, image{path, label, format})
 
 	return fmt.Sprintf("/dev/disk/by-fakemachine-label/%s", label), nil
+}
+
+// CreateImageWithLabel creates an image file at path a given size and exposes
+// it in the fake machine using the given label as the serial id. If size is -1
+// then the image should already exist and the size isn't modified.
+//
+// label needs to be less then 20 characters due to limitations from qemu
+//
+// The returned string is the device path of the new image as seen inside
+// fakemachine.
+func (m *Machine) CreateImageWithLabel(path string, size int64, label string) (string,
+	error) {
+	return m.CreateImageWithLabelFormat(path, size, label, "raw")
+}
+
+// TODO
+func (m *Machine) CreateImageWithFormat(imagepath string, size int64, format string) (string, error) {
+	label := fmt.Sprintf("fakedisk-%d", len(m.images))
+
+	return m.CreateImageWithLabelFormat(imagepath, size, label, format)
 }
 
 // CreateImage does the same as CreateImageWithLabel but lets the library pick
 // the label.
 func (m *Machine) CreateImage(imagepath string, size int64) (string, error) {
-	label := fmt.Sprintf("fakedisk-%d", len(m.images))
-
-	return m.CreateImageWithLabel(imagepath, size, label)
+	return m.CreateImageWithFormat(imagepath, size, "raw")
 }
 
 // SetMemory sets the fakemachines amount of memory (in megabytes). Defaults to

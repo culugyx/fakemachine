@@ -233,6 +233,9 @@ func (b umlBackend) Start() (bool, error) {
 	}
 
 	for i, img := range m.images {
+		if img.format != "raw" {
+			return false, fmt.Errorf("uml backend doesn't support non-raw image format (%s)", img.format)
+		}
 		umlargs = append(umlargs,
 			fmt.Sprintf("ubd%d=%s", i, img.path))
 	}

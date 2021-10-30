@@ -251,7 +251,7 @@ func (b kvmBackend) Start() (bool, error) {
 
 	for i, img := range m.images {
 		qemuargs = append(qemuargs, "-drive",
-			fmt.Sprintf("file=%s,if=none,format=raw,cache=unsafe,id=drive-virtio-disk%d", img.path, i))
+			fmt.Sprintf("file=%s,if=none,format=%s,cache=unsafe,id=drive-virtio-disk%d", img.path, img.format, i))
 		qemuargs = append(qemuargs, "-device",
 			fmt.Sprintf("virtio-blk-pci,drive=drive-virtio-disk%d,id=virtio-disk%d,serial=%s",
 				i, i, img.label))
